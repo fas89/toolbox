@@ -82,6 +82,14 @@ print("✓ clean" if not bad else f"{bad} hidden character(s)")
 sys.exit(1 if bad else 0)
 PY
 
+echo "== Tests"
+if out=$(PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests 2>&1); then
+  echo "✓ $(printf '%s\n' "$out" | grep '^Ran')"
+else
+  printf '%s\n' "$out"
+  fail=1
+fi
+
 echo "== Claude Code marketplace"
 claude plugin validate . --strict || fail=1
 

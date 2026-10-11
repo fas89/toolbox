@@ -38,6 +38,9 @@ without installing it: `claude --plugin-dir skills/<name>`.
 - Nothing private ships: no internal project names, hostnames, file paths,
   credentials, or customer data. Grep before you commit.
 - Credit borrowed ideas in a **Credits** section at the end of `SKILL.md`.
+- A skill that ships a script gets tests in `tests/` (stdlib `unittest`, run by
+  `check.sh`). Tests live outside the skill folder so installs stay small. Write
+  each test so it fails against the code before the fix.
 
 ## Traps
 
