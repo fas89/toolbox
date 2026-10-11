@@ -1,0 +1,25 @@
+{
+  "name": "fas89",
+  "description": "Skills and tools for AI coding agents, shared by fas89.",
+  "owner": {
+    "name": "fas89",
+    "url": "https://github.com/fas89"
+  },
+  "plugins": [
+    {
+      "name": "borrow-before-build",
+      "source": "./skills/borrow-before-build",
+      "skills": ["./"],
+      "description": "Before building anything non-trivial from scratch, the agent checks your codebase and searches for open-source prior art, then shows its receipts.",
+      "author": {
+        "name": "fas89",
+        "url": "https://github.com/fas89"
+      },
+      "homepage": "https://github.com/fas89/toolbox/tree/main/skills/borrow-before-build",
+      "repository": "https://github.com/fas89/toolbox",
+      "license": "MIT",
+      "keywords": ["open-source", "reuse", "prior-art", "research", "dependencies"],
+      "category": "development"
+    }
+  ]
+}
