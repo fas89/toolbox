@@ -1,0 +1,113 @@
+# Codepoint classes
+
+What the scanner detects, why it matters, and what it does by default.
+
+| Class | Codepoints | Severity | Default |
+| --- | --- | --- | --- |
+| `zero-width` | `U+200B` ZWSP, `U+200C` ZWNJ, `U+200D` ZWJ, `U+2060` WJ, `U+FEFF` BOM, `U+00AD` SHY, `U+180E`, `U+2061`–`U+2064` | medium | remove unless load-bearing |
+| `bidi-control` | `U+202A`–`U+202E`, `U+2066`–`U+2069` | **high** | remove (kept in RTL docs unless `--strip-bidi`) |
+| `bidi-mark` | `U+200E` LRM, `U+200F` RLM | medium | remove unless the document contains RTL script |
+| `tag-char` | `U+E0000`–`U+E007F` | **high** | remove unless inside one of the three RGI subdivision flags |
+| `variation-selector` | `U+FE00`–`U+FE0F`, `U+E0100`–`U+E01EF` | medium | remove unless `U+FE0E`/`U+FE0F` after an emoji or keycap digit, or any selector after a CJK ideograph or complex-script letter |
+| `private-use` | `U+E000`–`U+F8FF`, `U+F0000`–`U+FFFFD`, `U+100000`–`U+10FFFD` | **high** | remove |
+| `deprecated-format` | `U+206A`–`U+206F` | **high** | remove |
+| `line-separator` | `U+2028`, `U+2029` | medium | replace with a newline |
+| `blank-glyph` | `U+115F`, `U+1160`, `U+3164`, `U+FFA0` Hangul fillers, `U+2800` blank Braille | **high** | remove unless inside a Hangul jamo sequence or Braille art |
+| `exotic-space` | `U+00A0`, `U+1680`, `U+2000`–`U+200A`, `U+202F`, `U+205F`, `U+3000` | low | keep (opt in with `--normalize-spaces`) |
+| `format-control` | any other `Cf` general category | medium | remove |
+| `control` | `Cc` other than tab/LF/CR | medium | report only (opt in with `--strip-controls`) |
+| `mixed-script` | Latin + another script inside one word | **high** | report only, never auto-fixed |
+
+## Why each class matters
+
+**Zero-width.** Breaks `grep`, string equality, and identifier matching while looking
+identical on screen. `U+00AD` (soft hyphen) is the sneakiest: invisible until a line wraps.
+Also the classic channel for steganographic payloads — a run of ZWSP/ZWNJ encodes bits.
+
+**Bidi controls.** The Trojan Source attack (CVE-2021-42574, Boucher & Anderson 2021). An
+`U+202E` RIGHT-TO-LEFT OVERRIDE inside a comment reorders the *rendered* line so a reviewer
+sees `if (isAdmin) { … }` where the compiler sees a comment and unguarded code. Affects
+essentially every language with block comments and string literals. Treat any bidi control
+in source as high severity until proven intentional.
+
+**Tag characters.** `U+E0000`–`U+E007F` mirror ASCII, render as nothing, and survive most
+copy-paste. Their only sanctioned use is subdivision flag emoji, and only three of those
+are recommended for general interchange: England, Scotland and Wales. Anywhere else,
+including any other `U+1F3F4 … U+E007F` wrapper, they are a covert channel — the current
+favourite for hiding instructions inside text that a human reviewer cannot see.
+
+**Variation selectors.** `U+FE00`–`U+FE0F` and `U+E0100`–`U+E01EF` legitimately pick a
+glyph variant, but there are 256 of them, so a run after any base character carries one
+byte per selector and is invisible everywhere. After an emoji only `U+FE0E` (text style)
+and `U+FE0F` (emoji style) mean anything; every other selector there is payload.
+
+**Private use.** No assigned meaning. Renders as whatever the origin font decides and as
+tofu everywhere else, so it survives review while carrying out-of-band data.
+
+**Line separators.** `U+2028` and `U+2029` end a line for some parsers (JavaScript, many
+Unicode-aware readers) and not for others (most editors, `grep`, diff tools). The same file
+then has different line structure depending on who reads it. Cleaning converts them to a
+plain newline.
+
+**Blank glyphs.** The Hangul fillers render as empty space but are classified as letters,
+so they are valid in identifiers: a JavaScript variable named `U+3164` is invisible in
+review (the "invisible backdoor"). `U+2800` BRAILLE PATTERN BLANK does the same job in
+prose and usernames. Kept only where they belong: jamo fillers inside Hangul jamo
+sequences, the blank cell inside Braille art.
+
+**Exotic spaces.** Mostly a formatting nuisance, but NBSP inside code or a URL is a real
+bug, and a `U+3000` ideographic space in an identifier is deliberate. Low severity because
+NBSP is frequently intentional in prose (French typography, `10 km`), so normalising is
+opt-in.
+
+**Control characters.** Report-only by design. A `Cc` codepoint in a text file is usually
+deliberate: `U+001B` starts ANSI colour sequences (so any test fixture for terminal-log
+rendering is full of them), and `U+001C`–`U+001F` are ASCII separators used as delimiters —
+the Iceberg REST catalog spec joins multipart namespaces on `U+001F`. Deleting these
+silently corrupts data and breaks tests, so the scanner names them and stops. Pass
+`--strip-controls` when you genuinely want them gone.
+
+**Mixed-script words.** The homoglyph signal. Cyrillic `U+0421`, Greek `U+039F`, and
+Cherokee `U+13A0` are visually identical to Latin `C`, `O` and `D`. Used to spoof domains,
+package names, and identifiers. Report-only by design: replacing them is a semantic
+decision, since a genuinely Cyrillic word is not an attack.
+
+## Load-bearing preservation
+
+A carrier and a functional character can be the same codepoint. The rule is context:
+
+| Character | Load-bearing when | Carrier when |
+| --- | --- | --- |
+| `U+200D` ZWJ | between emoji, or joining complex-script letters | between ASCII |
+| `U+200C` ZWNJ | inside Arabic/Persian/Indic/Hangul text | between ASCII |
+| `U+FE0E`/`U+FE0F` | follows an emoji, a keycap digit, or a CJK ideograph | follows ASCII |
+| other variation selectors | follow a CJK ideograph or complex-script letter | follow an emoji or ASCII |
+| `U+E00xx` tag | inside the England, Scotland or Wales flag | anywhere else, including other flag-shaped runs |
+| `U+115F`/`U+1160` | inside a Hangul jamo sequence | anywhere else |
+| `U+2800` | inside Braille art | anywhere else |
+| `U+200F` RLM | document contains RTL letters | pure-LTR document |
+| `U+FEFF` BOM | at offset 0 | anywhere else in the file |
+
+`--aggressive` overrides all of these. It will visibly corrupt emoji sequences and Persian
+or Devanagari text, so only reach for it when the user explicitly wants a paranoid pass and
+accepts that cost.
+
+## Prior art
+
+- [dcondrey/unicode-safety-check](https://github.com/dcondrey/unicode-safety-check) — GitHub
+  Action covering the same classes at PR time; use it as a CI gate alongside this skill.
+- [Trojan Source](https://trojansource.codes/) — the original CVE-2021-42574 paper and PoCs.
+- [The Invisible JavaScript Backdoor](https://certitude.consulting/blog/en/invisible-backdoor/)
+  — Hangul filler `U+3164` as an identifier.
+- [Smuggling arbitrary data through an emoji](https://paulbutler.org/2025/smuggling-arbitrary-data-through-an-emoji/)
+  — one byte per variation selector.
+- [emoji-sequences.txt](https://www.unicode.org/Public/emoji/latest/emoji-sequences.txt) —
+  the RGI tag sequences (the three flags above).
+- Rust `unicode-security` and the `confusable_homoglyphs` Python package implement UTS #39
+  confusable detection more completely than the block heuristic used here.
+- `ftfy` fixes mojibake and encoding damage — a different problem, often present in the same
+  files.
+
+The scanner is stdlib-only because these tools either run as CI services, target one class,
+or pull dependency trees; a single-file script with no install step composes better with an
+agent that needs to inspect an arbitrary file right now.

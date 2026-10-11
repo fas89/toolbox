@@ -9,7 +9,9 @@
     {
       "name": "borrow-before-build",
       "source": "./skills/borrow-before-build",
-      "skills": ["./"],
+      "skills": [
+        "./"
+      ],
       "description": "Before building anything non-trivial from scratch, the agent checks your codebase and searches for open-source prior art, then shows its receipts.",
       "author": {
         "name": "fas89",
@@ -18,8 +20,38 @@
       "homepage": "https://github.com/fas89/toolbox/tree/main/skills/borrow-before-build",
       "repository": "https://github.com/fas89/toolbox",
       "license": "MIT",
-      "keywords": ["open-source", "reuse", "prior-art", "research", "dependencies"],
+      "keywords": [
+        "open-source",
+        "reuse",
+        "prior-art",
+        "research",
+        "dependencies"
+      ],
       "category": "development"
+    },
+    {
+      "name": "clean-invisible-unicode",
+      "source": "./skills/clean-invisible-unicode",
+      "skills": [
+        "./"
+      ],
+      "description": "Finds and removes invisible or deceptive Unicode (zero-width, bidi/Trojan Source, tag-character and variation-selector payloads, blank-glyph identifiers) while keeping emoji and complex scripts intact.",
+      "author": {
+        "name": "fas89",
+        "url": "https://github.com/fas89"
+      },
+      "homepage": "https://github.com/fas89/toolbox/tree/main/skills/clean-invisible-unicode",
+      "repository": "https://github.com/fas89/toolbox",
+      "license": "MIT",
+      "keywords": [
+        "unicode",
+        "security",
+        "trojan-source",
+        "prompt-injection",
+        "zero-width",
+        "homoglyph"
+      ],
+      "category": "security"
     }
   ]
 }

@@ -10,6 +10,7 @@ you don't have to build them yourself.
 | Skill | What it does |
 |---|---|
 | [**borrow-before-build**](skills/borrow-before-build/) | Before your agent builds anything non-trivial from scratch, it checks your codebase and dependencies, searches for open-source prior art, and shows you receipts. Then it decides whether to depend on it, vendor it, adapt the pattern, or diverge on purpose. |
+| [**clean-invisible-unicode**](skills/clean-invisible-unicode/) | Finds and removes characters you can't see: zero-width spaces, Trojan Source bidi controls, hidden tag-character instructions, variation-selector payloads, invisible Hangul-filler variables. Emoji and complex scripts keep working. Ships a stdlib-only Python scanner that doubles as a CI gate. |
 
 Every skill uses the open [Agent Skills](https://agentskills.io) format: a folder
 with a `SKILL.md`. It works in Claude Code and in other agents that read
@@ -22,9 +23,11 @@ with a `SKILL.md`. It works in Claude Code and in other agents that read
 ```
 /plugin marketplace add fas89/toolbox
 /plugin install borrow-before-build@fas89
+/plugin install clean-invisible-unicode@fas89
 ```
 
-The skill fires on its own when a task calls for it. To run it by hand, type
+Each skill is its own plugin, so install only the ones you want. Skills fire on their own
+when a task calls for them. To run one by hand, type `/<skill>:<skill>`, for example
 `/borrow-before-build:borrow-before-build`.
 
 Claude Code doesn't auto-update third-party marketplaces until you turn it on:
@@ -34,8 +37,10 @@ yourself with `/plugin marketplace update fas89`.
 **Any other agent.** Use the [`skills` CLI](https://github.com/vercel-labs/skills):
 
 ```bash
-npx skills add fas89/toolbox --skill borrow-before-build
+npx skills add fas89/toolbox --skill clean-invisible-unicode
 ```
+
+Leave out `--skill` to choose interactively.
 
 Add `-g` to install it for all your projects, or `-a <agent>` to pick the agent.
 
@@ -49,7 +54,9 @@ skills/<name>/                     one folder per skill
   SKILL.md                         the skill: frontmatter + instructions
   README.md                        for people browsing GitHub
   LICENSE.txt                      copy of the repo license, so every install carries it
+  scripts/, references/            optional: code and docs the skill loads on demand
 .claude-plugin/marketplace.json    Claude Code catalog: one plugin per skill
+tests/                             tests for skill scripts (not shipped with installs)
 scripts/check.sh                   every check CI runs
 ```
 
