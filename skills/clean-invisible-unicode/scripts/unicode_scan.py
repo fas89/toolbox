@@ -41,7 +41,7 @@ PRIVATE_USE = [(0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD)]
 JOINING_SCRIPTS = [
     (0x0590, 0x05FF),  # Hebrew
     (0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF),  # Arabic
-    (0xFB50, 0xFDFF), (0xFE70, 0xFEFF),                    # Arabic pres. forms
+    (0xFB50, 0xFDFF), (0xFE70, 0xFEFC),                    # Arabic pres. forms
     (0x0700, 0x074F),  # Syriac
     (0x0780, 0x07BF),  # Thaana
     (0x07C0, 0x07FF),  # NKo
@@ -56,7 +56,7 @@ JOINING_SCRIPTS = [
 RTL_SCRIPTS = [
     (0x0590, 0x05FF), (0x0600, 0x06FF), (0x0700, 0x074F), (0x0750, 0x077F),
     (0x0780, 0x07BF), (0x07C0, 0x07FF), (0x0800, 0x085F), (0x08A0, 0x08FF),
-    (0xFB1D, 0xFDFF), (0xFE70, 0xFEFF), (0x10800, 0x10FFF), (0x1E800, 0x1EFFF),
+    (0xFB1D, 0xFDFF), (0xFE70, 0xFEFC), (0x10800, 0x10FFF), (0x1E800, 0x1EFFF),
 ]
 # Approximation of Extended_Pictographic (not exposed by unicodedata).
 PICTOGRAPHIC = [
@@ -80,7 +80,11 @@ LINE_SEPARATORS = {0x2028, 0x2029}
 # identifier (the Hangul-filler "invisible backdoor") or pad text unseen.
 BLANK_GLYPHS = {0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800}
 HANGUL_JAMO = [(0x1100, 0x11FF), (0xA960, 0xA97F), (0xD7B0, 0xD7FF)]
-BRAILLE = [(0x2800, 0x28FF)]
+JAMO_FILLERS = {0x115F, 0x1160}
+BRAILLE_DOTS = [(0x2801, 0x28FF)]  # every Braille cell except the blank one
+BIDI_OVERRIDES = {0x202D, 0x202E}
+BIDI_CLOSER = {0x202A: 0x202C, 0x202B: 0x202C,                 # embeddings -> PDF
+               0x2066: 0x2069, 0x2067: 0x2069, 0x2068: 0x2069}  # isolates -> PDI
 
 # Non-Latin letters that render as Latin look-alikes (homoglyph spoofing).
 SCRIPT_BLOCKS = [
@@ -213,9 +217,37 @@ def _in_flag_sequence(text: str, i: int) -> bool:
     return spec in RGI_SUBDIVISION_FLAGS
 
 
-def _near(text: str, i: int, ranges: Sequence[Tuple[int, int]]) -> bool:
-    return any(c is not None and _in(ord(c), ranges)
-               for c in (_neighbour(text, i, -1), _neighbour(text, i, 1)))
+def _run_touches(text: str, i: int, run: set, ranges: Sequence[Tuple[int, int]]) -> bool:
+    """True if the run of `run` codepoints around text[i] borders a character in
+    `ranges` that is not itself part of the run, so a run cannot vouch for itself."""
+    j = i
+    while j >= 0 and ord(text[j]) in run:
+        j -= 1
+    k = i
+    while k < len(text) and ord(text[k]) in run:
+        k += 1
+    return any(0 <= x < len(text) and ord(text[x]) not in run and _in(ord(text[x]), ranges)
+               for x in (j, k))
+
+
+def _balanced_rtl_line(text: str, i: int) -> bool:
+    """True if text[i]'s line has right-to-left letters and its bidi embeddings and
+    isolates all close on that line. Any override makes it False."""
+    start = text.rfind("\n", 0, i) + 1
+    end = text.find("\n", i)
+    line = text[start:] if end == -1 else text[start:end]
+    if not _has_rtl(line):
+        return False
+    stack: List[int] = []
+    for c in line:
+        cp = ord(c)
+        if cp in BIDI_OVERRIDES:
+            return False
+        if cp in BIDI_CLOSER:
+            stack.append(BIDI_CLOSER[cp])
+        elif cp in (0x202C, 0x2069) and (not stack or stack.pop() != cp):
+            return False
+    return not stack
 
 
 def _has_rtl(text: str) -> bool:
@@ -226,7 +258,8 @@ def _has_rtl(text: str) -> bool:
 
 def analyse(text: str, path: str = "-", *, aggressive: bool = False,
             normalize_spaces: bool = False, strip_leading_bom: bool = False,
-            strip_bidi: bool = False, strip_controls: bool = False) -> Report:
+            strip_bidi: bool = False, strip_controls: bool = False,
+            keep_rtl_bidi: bool = False) -> Report:
     rep = Report(path=path)
     doc_has_rtl = _has_rtl(text)
     line, col = 1, 1
@@ -266,10 +299,12 @@ def analyse(text: str, path: str = "-", *, aggressive: bool = False,
 
         elif cp in BIDI_CONTROLS:
             # Trojan Source (CVE-2021-42574): reordering controls can make
-            # rendered source differ from what the compiler sees.
+            # rendered source differ from what the compiler sees. Flagged even in
+            # right-to-left documents, as rustc does: one RTL letter anywhere must
+            # not switch the check off.
             klass, sev, action = "bidi-control", "high", "remove"
-            if doc_has_rtl and not (aggressive or strip_bidi):
-                action, reason = "keep", "document contains RTL script (use --strip-bidi)"
+            if keep_rtl_bidi and not aggressive and _balanced_rtl_line(text, i):
+                action, reason = "keep", "balanced on a right-to-left line (--keep-rtl-bidi)"
 
         elif _is_tag(cp):
             klass, sev, action = "tag-char", "high", "remove"
@@ -307,9 +342,9 @@ def analyse(text: str, path: str = "-", *, aggressive: bool = False,
         elif cp in BLANK_GLYPHS:
             klass, sev, action = "blank-glyph", "high", "remove"
             reason = "renders as blank space but counts as a letter or symbol"
-            if cp in (0x115F, 0x1160) and _near(text, i, HANGUL_JAMO):
+            if cp in JAMO_FILLERS and _run_touches(text, i, JAMO_FILLERS, HANGUL_JAMO):
                 action, reason = "keep", "part of a Hangul jamo sequence"
-            elif cp == 0x2800 and _near(text, i, BRAILLE):
+            elif cp == 0x2800 and _run_touches(text, i, {0x2800}, BRAILLE_DOTS):
                 action, reason = "keep", "blank cell in Braille art"
             if action == "keep" and aggressive:
                 action, reason = "remove", f"{reason} (--aggressive)"
@@ -484,8 +519,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="also strip load-bearing invisibles (emoji glue, script joiners, flags)")
     ap.add_argument("--normalize-spaces", action="store_true",
                     help="convert NBSP and exotic spaces to U+0020")
+    ap.add_argument("--keep-rtl-bidi", action="store_true",
+                    help="keep bidi embeddings/isolates that are balanced on a line "
+                         "containing right-to-left text (overrides are never kept)")
     ap.add_argument("--strip-bidi", action="store_true",
-                    help="strip bidi controls even in documents containing RTL script")
+                    help="strip bidi marks (LRM/RLM) even in documents containing RTL script")
     ap.add_argument("--strip-controls", action="store_true",
                     help="remove C0/C1 control characters (ANSI codes, ASCII separators); "
                          "report-only by default because they are usually deliberate")
@@ -521,7 +559,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         rep = analyse(text, path, aggressive=args.aggressive,
                       normalize_spaces=args.normalize_spaces,
                       strip_leading_bom=args.strip_leading_bom,
-                      strip_bidi=args.strip_bidi,
+                      strip_bidi=args.strip_bidi, keep_rtl_bidi=args.keep_rtl_bidi,
                       strip_controls=args.strip_controls)
         reports.append(rep)
 
@@ -534,7 +572,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             residual.append(analyse(out, path, aggressive=args.aggressive,
                                     normalize_spaces=args.normalize_spaces,
                                     strip_leading_bom=args.strip_leading_bom,
-                                    strip_bidi=args.strip_bidi,
+                                    strip_bidi=args.strip_bidi, keep_rtl_bidi=args.keep_rtl_bidi,
                                     strip_controls=args.strip_controls))
             if out == text:
                 continue

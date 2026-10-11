@@ -5,14 +5,14 @@ What the scanner detects, why it matters, and what it does by default.
 | Class | Codepoints | Severity | Default |
 | --- | --- | --- | --- |
 | `zero-width` | `U+200B` ZWSP, `U+200C` ZWNJ, `U+200D` ZWJ, `U+2060` WJ, `U+FEFF` BOM, `U+00AD` SHY, `U+180E`, `U+2061`–`U+2064` | medium | remove unless load-bearing |
-| `bidi-control` | `U+202A`–`U+202E`, `U+2066`–`U+2069` | **high** | remove (kept in RTL docs unless `--strip-bidi`) |
+| `bidi-control` | `U+202A`–`U+202E`, `U+2066`–`U+2069` | **high** | remove (`--keep-rtl-bidi` keeps balanced embeddings/isolates on RTL lines; overrides never) |
 | `bidi-mark` | `U+200E` LRM, `U+200F` RLM | medium | remove unless the document contains RTL script |
 | `tag-char` | `U+E0000`–`U+E007F` | **high** | remove unless inside one of the three RGI subdivision flags |
 | `variation-selector` | `U+FE00`–`U+FE0F`, `U+E0100`–`U+E01EF` | medium | remove unless `U+FE0E`/`U+FE0F` after an emoji or keycap digit, or any selector after a CJK ideograph or complex-script letter |
 | `private-use` | `U+E000`–`U+F8FF`, `U+F0000`–`U+FFFFD`, `U+100000`–`U+10FFFD` | **high** | remove |
 | `deprecated-format` | `U+206A`–`U+206F` | **high** | remove |
 | `line-separator` | `U+2028`, `U+2029` | medium | replace with a newline |
-| `blank-glyph` | `U+115F`, `U+1160`, `U+3164`, `U+FFA0` Hangul fillers, `U+2800` blank Braille | **high** | remove unless inside a Hangul jamo sequence or Braille art |
+| `blank-glyph` | `U+115F`, `U+1160`, `U+3164`, `U+FFA0` Hangul fillers, `U+2800` blank Braille | **high** | remove unless the run borders a real jamo or a visible Braille dot |
 | `exotic-space` | `U+00A0`, `U+1680`, `U+2000`–`U+200A`, `U+202F`, `U+205F`, `U+3000` | low | keep (opt in with `--normalize-spaces`) |
 | `format-control` | any other `Cf` general category | medium | remove |
 | `control` | `Cc` other than tab/LF/CR | medium | report only (opt in with `--strip-controls`) |
@@ -28,7 +28,11 @@ Also the classic channel for steganographic payloads — a run of ZWSP/ZWNJ enco
 `U+202E` RIGHT-TO-LEFT OVERRIDE inside a comment reorders the *rendered* line so a reviewer
 sees `if (isAdmin) { … }` where the compiler sees a comment and unguarded code. Affects
 essentially every language with block comments and string literals. Treat any bidi control
-in source as high severity until proven intentional.
+in source as high severity until proven intentional. The scanner does, even in documents
+that contain right-to-left text: if one Hebrew letter anywhere in a file switched the check
+off, an attacker would add one. `--keep-rtl-bidi` is the opt-in for RTL prose: it keeps
+embeddings and isolates only when the same line has RTL letters and every one of them
+closes on that line. Overrides (`U+202D`, `U+202E`) are never kept.
 
 **Tag characters.** `U+E0000`–`U+E007F` mirror ASCII, render as nothing, and survive most
 copy-paste. Their only sanctioned use is subdivision flag emoji, and only three of those
@@ -52,8 +56,9 @@ plain newline.
 **Blank glyphs.** The Hangul fillers render as empty space but are classified as letters,
 so they are valid in identifiers: a JavaScript variable named `U+3164` is invisible in
 review (the "invisible backdoor"). `U+2800` BRAILLE PATTERN BLANK does the same job in
-prose and usernames. Kept only where they belong: jamo fillers inside Hangul jamo
-sequences, the blank cell inside Braille art.
+prose and usernames. Kept only where they belong: a jamo filler whose run borders a real
+jamo, a blank Braille cell whose run borders a visible dot. A run of blanks never counts
+as its own context.
 
 **Exotic spaces.** Mostly a formatting nuisance, but NBSP inside code or a URL is a real
 bug, and a `U+3000` ideographic space in an identifier is deliberate. Low severity because
@@ -83,9 +88,10 @@ A carrier and a functional character can be the same codepoint. The rule is cont
 | `U+FE0E`/`U+FE0F` | follows an emoji, a keycap digit, or a CJK ideograph | follows ASCII |
 | other variation selectors | follow a CJK ideograph or complex-script letter | follow an emoji or ASCII |
 | `U+E00xx` tag | inside the England, Scotland or Wales flag | anywhere else, including other flag-shaped runs |
-| `U+115F`/`U+1160` | inside a Hangul jamo sequence | anywhere else |
-| `U+2800` | inside Braille art | anywhere else |
+| `U+115F`/`U+1160` | the filler run borders a real jamo | anywhere else, including a run of fillers |
+| `U+2800` | the blank run borders a visible Braille dot | anywhere else, including a run of blanks |
 | `U+200F` RLM | document contains RTL letters | pure-LTR document |
+| bidi embedding/isolate | `--keep-rtl-bidi`, RTL letters on the same line, all closed on that line | everywhere else, always for overrides |
 | `U+FEFF` BOM | at offset 0 | anywhere else in the file |
 
 `--aggressive` overrides all of these. It will visibly corrupt emoji sequences and Persian

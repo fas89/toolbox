@@ -55,7 +55,8 @@ Useful flags:
 | Flag | Effect |
 | --- | --- |
 | `--normalize-spaces` | NBSP and exotic spaces → `U+0020` (off by default: NBSP is often deliberate) |
-| `--strip-bidi` | strip bidi controls even in documents that contain RTL script |
+| `--keep-rtl-bidi` | keep bidi embeddings/isolates that close on a line containing RTL text; overrides are never kept |
+| `--strip-bidi` | strip bidi marks (LRM/RLM) even in documents that contain RTL script |
 | `--strip-controls` | remove C0/C1 controls (report-only by default: ANSI codes and ASCII separators are usually deliberate) |
 | `--strip-leading-bom` | remove a byte-order mark at offset 0 (kept by default) |
 | `--nfkc` | apply NFKC normalisation after stripping |
@@ -82,8 +83,12 @@ latter by default, reporting each one with a reason:
   heart: `U+2764 U+FE0F`). Any other selector after an emoji is removed, because that is
   how bytes are smuggled through an emoji.
 - variation selectors after CJK ideographs (standardized and ideographic variants)
-- `U+2800` blank cells inside Braille art, and Hangul jamo fillers inside jamo sequences
-- bidi marks in documents that actually contain right-to-left script
+- `U+2800` blank cells next to visible Braille dots, and Hangul jamo fillers next to a real
+  jamo. A run of blanks cannot vouch for itself.
+- bidi marks (LRM/RLM) in documents that actually contain right-to-left script. Bidi
+  *controls* are always flagged, as rustc does: one RTL letter anywhere in a file must not
+  switch off Trojan Source detection. Pass `--keep-rtl-bidi` for RTL prose that uses
+  balanced embeddings or isolates.
 - C0/C1 control characters — ANSI colour codes in log-rendering tests, ASCII separators
   used as deliberate delimiters (the Iceberg REST spec joins namespaces on `U+001F`)
 

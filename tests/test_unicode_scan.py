@@ -23,6 +23,8 @@ _spec.loader.exec_module(us)
 FLAG, CANCEL = chr(0x1F3F4), chr(0xE007F)
 ZWSP, ZWNJ, ZWJ = chr(0x200B), chr(0x200C), chr(0x200D)
 VS16, KEYCAP = chr(0xFE0F), chr(0x20E3)
+RLO, PDF, RLI, PDI = chr(0x202E), chr(0x202C), chr(0x2067), chr(0x2069)
+HEBREW = chr(0x05E9) + chr(0x05DC) + chr(0x05D5) + chr(0x05DD)  # "shalom"
 
 
 def tags(ascii_text):
@@ -61,8 +63,17 @@ class LoadBearingIsPreserved(unittest.TestCase):
         letters = [0x0645, 0x06CC, 0x200C, 0x062E, 0x0648, 0x0627, 0x0647, 0x0645]
         self.assert_all_kept("".join(chr(c) for c in letters))
 
-    def test_braille_art_blank_cell(self):
-        self.assert_all_kept(chr(0x28FF) + chr(0x2800) + chr(0x28FF))
+    def test_braille_art_blank_cells(self):
+        self.assert_all_kept(chr(0x28FF) + chr(0x2800) * 3 + chr(0x28FF))
+
+    def test_jamo_filler_beside_a_real_vowel(self):
+        self.assert_all_kept(chr(0x115F) + chr(0x1161))
+
+    def test_balanced_isolate_on_an_rtl_line_with_opt_in(self):
+        line = HEBREW + " " + RLI + HEBREW + PDI + " " + HEBREW
+        rep = us.analyse(line, keep_rtl_bidi=True)
+        self.assertEqual({f.action for f in rep.findings}, {"keep"})
+        self.assertIsNone(rep.max_severity())
 
 
 class CarriersAreRemoved(unittest.TestCase):
@@ -100,6 +111,32 @@ class SmugglingBypasses(unittest.TestCase):
         # The "invisible backdoor": U+3164 used as a JavaScript variable name.
         src = "const { timeout, " + chr(0x3164) + " } = req.query;"
         self.assertEqual(us.analyse(src).max_severity(), "high")
+
+    def test_rtl_letter_elsewhere_does_not_hide_trojan_source(self):
+        text = "# " + chr(0x05D0) + " note\n" + "access = 'user'  # " + RLO + "}{ nimda\n"
+        self.assertEqual(us.analyse(text).max_severity(), "high")
+
+    def test_keep_rtl_bidi_never_keeps_an_override(self):
+        line = HEBREW + " " + RLO + HEBREW + PDF + "\n"
+        self.assertEqual(us.analyse(line, keep_rtl_bidi=True).max_severity(), "high")
+
+    def test_keep_rtl_bidi_never_keeps_an_unbalanced_isolate(self):
+        line = HEBREW + " " + RLI + HEBREW + "\n"
+        self.assertEqual(us.analyse(line, keep_rtl_bidi=True).max_severity(), "high")
+
+    def test_keep_rtl_bidi_needs_rtl_on_the_same_line(self):
+        text = HEBREW + "\n" + "x = 1 " + RLI + "y" + PDI + "\n"
+        self.assertEqual(us.analyse(text, keep_rtl_bidi=True).max_severity(), "high")
+
+    def test_bom_does_not_make_a_document_rtl(self):
+        rep = us.analyse(chr(0xFEFF) + "plain text" + chr(0x200F))
+        self.assertIn("remove", {f.action for f in rep.findings if f.codepoint == 0x200F})
+
+    def test_run_of_blank_braille_alone(self):
+        self.assertEqual(us.analyse("user" + chr(0x2800) * 6 + "name").max_severity(), "high")
+
+    def test_run_of_jamo_fillers_alone(self):
+        self.assertEqual(us.analyse("id=" + chr(0x115F) * 2 + ";").max_severity(), "high")
 
     def test_line_separator_becomes_newline(self):
         text = "a" + chr(0x2028) + "b"
