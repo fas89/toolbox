@@ -74,7 +74,22 @@ TAG_TERMINATOR = 0xE007F
 RGI_SUBDIVISION_FLAGS = {"gbeng", "gbsct", "gbwls"}
 PRESENTATION_SELECTORS = {0xFE0E, 0xFE0F}  # text style / emoji style
 KEYCAP = 0x20E3
-CJK = [(0x3000, 0x9FFF), (0x20000, 0x3FFFF)]
+# Ideographs only: CJK Unified (+ Ext A..), Compatibility. Not kana, not CJK
+# punctuation, not U+3000 - none of those has a registered variation sequence.
+IDEOGRAPHS = [(0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x3FFFF)]
+# Selectors a real ideographic variation sequence uses (IVS, and the standardized
+# variants of compatibility ideographs). Exactly one per base.
+IDEOGRAPHIC_SELECTORS = [(0xFE00, 0xFE02), (0xE0100, 0xE01EF)]
+IVS_REASON = "selects a glyph variant of the preceding ideograph"
+JOINER_REASON = "joins letters in a complex script"
+# Keep rules judge one character at a time, so a payload can satisfy them one byte
+# (or bit) per visible base character. These limits catch the pattern instead.
+# Calibrated on Wikipedia text (2026-10-12): Persian joiners average ~2% of letters,
+# worst 200-letter window 8.1%; Urdu, Hindi, Malayalam stay under 2.1%.
+IVS_LIMIT = 3            # more kept ideographic selectors than this in one file is data
+JOINER_WINDOW = 200      # letters + joiners
+JOINER_RATIO = 0.15      # joiners per letter inside the densest window
+JOINER_MIN = 6           # ...and at least this many joiners in it
 LINE_SEPARATORS = {0x2028, 0x2029}
 # Letters and symbols that render as blank space, so they can name an invisible
 # identifier (the Hangul-filler "invisible backdoor") or pad text unseen.
@@ -259,7 +274,7 @@ def _has_rtl(text: str) -> bool:
 def analyse(text: str, path: str = "-", *, aggressive: bool = False,
             normalize_spaces: bool = False, strip_leading_bom: bool = False,
             strip_bidi: bool = False, strip_controls: bool = False,
-            keep_rtl_bidi: bool = False) -> Report:
+            keep_rtl_bidi: bool = False, allow_ivs: bool = False) -> Report:
     rep = Report(path=path)
     doc_has_rtl = _has_rtl(text)
     line, col = 1, 1
@@ -279,7 +294,7 @@ def analyse(text: str, path: str = "-", *, aggressive: bool = False,
             klass, sev, action = "zero-width", "medium", "remove"
             prev, nxt = _neighbour(text, i, -1), _neighbour(text, i, 1)
             if cp in (0x200C, 0x200D) and (_joins_script(prev) or _joins_script(nxt)):
-                action, reason = "keep", "joins letters in a complex script"
+                action, reason = "keep", JOINER_REASON
             elif cp == 0x200D and (_is_pictographic(prev) or _is_pictographic(nxt)):
                 action, reason = "keep", "emoji ZWJ sequence"
             elif cp == 0xFEFF and i == 0:
@@ -317,14 +332,15 @@ def analyse(text: str, path: str = "-", *, aggressive: bool = False,
         elif _in(cp, VARIATION_SELECTORS):
             # After an emoji only the two presentation selectors are meaningful;
             # any other selector there is a byte of a smuggled payload.
-            klass, sev, action = "variation-selector", "medium", "remove"
+            klass, sev, action = "variation-selector", "high", "remove"
             prev, nxt = _neighbour(text, i, -1), _neighbour(text, i, 1)
             keycap = (prev is not None and prev in "0123456789#*"
                       and nxt is not None and ord(nxt) == KEYCAP)
             if cp in PRESENTATION_SELECTORS and (_is_pictographic(prev) or keycap):
                 action, reason = "keep", "selects text or emoji style"
-            elif prev is not None and (_in(ord(prev), CJK) or _joins_script(prev)):
-                action, reason = "keep", "selects a glyph variant of the preceding character"
+            elif (prev is not None and _in(ord(prev), IDEOGRAPHS)
+                  and _in(cp, IDEOGRAPHIC_SELECTORS)):
+                action, reason = "keep", IVS_REASON
             if action == "keep" and aggressive:
                 action, reason = "remove", "variation selector (--aggressive)"
 
@@ -384,8 +400,38 @@ def analyse(text: str, path: str = "-", *, aggressive: bool = False,
                 action=action, reason=reason, replacement=replacement,
             ))
 
+    _flag_payload_patterns(rep, text, allow_ivs=allow_ivs)
     rep.mixed_script = _mixed_script_words(text)
     return rep
+
+
+def _flag_payload_patterns(rep: Report, text: str, *, allow_ivs: bool) -> None:
+    """Re-flag kept selectors and joiners whose numbers look like data, not text."""
+    ivs = [f for f in rep.findings if f.action == "keep" and f.reason == IVS_REASON]
+    if len(ivs) > IVS_LIMIT and not allow_ivs:
+        for f in ivs:
+            f.action, f.severity = "remove", "high"
+            f.reason = (f"{len(ivs)} ideographic variation selectors in one file; ordinary "
+                        f"text carries a few at most (--allow-ivs for name or registry data)")
+
+    joiners = [f for f in rep.findings if f.action == "keep" and f.reason == JOINER_REASON]
+    if len(joiners) < JOINER_MIN:
+        return
+    at = {f.index for f in joiners}
+    # Letters only: stacked diacritics, digits and punctuation in these blocks would
+    # otherwise inflate the count while adding no visible glyph.
+    seq = [1 if i in at else 0 for i, c in enumerate(text)
+           if i in at or (_joins_script(c) and c.isalpha())]
+    width = min(JOINER_WINDOW, len(seq))
+    count = densest = sum(seq[:width])
+    for k in range(width, len(seq)):
+        count += seq[k] - seq[k - width]
+        densest = max(densest, count)
+    if densest >= JOINER_MIN and densest > JOINER_RATIO * max(width - densest, 1):
+        for f in joiners:
+            f.action, f.severity = "remove", "high"
+            f.reason = ("joiners too dense for prose (over 15% of letters in a 200-letter "
+                        "window): the shape of a hidden bit stream")
 
 
 def _script_of(ch: str) -> Optional[str]:
@@ -519,6 +565,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="also strip load-bearing invisibles (emoji glue, script joiners, flags)")
     ap.add_argument("--normalize-spaces", action="store_true",
                     help="convert NBSP and exotic spaces to U+0020")
+    ap.add_argument("--allow-ivs", action="store_true",
+                    help="keep any number of ideographic variation sequences "
+                         "(name or registry data); by default more than 3 in a file is flagged")
     ap.add_argument("--keep-rtl-bidi", action="store_true",
                     help="keep bidi embeddings/isolates that are balanced on a line "
                          "containing right-to-left text (overrides are never kept)")
@@ -560,6 +609,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                       normalize_spaces=args.normalize_spaces,
                       strip_leading_bom=args.strip_leading_bom,
                       strip_bidi=args.strip_bidi, keep_rtl_bidi=args.keep_rtl_bidi,
+                      allow_ivs=args.allow_ivs,
                       strip_controls=args.strip_controls)
         reports.append(rep)
 
@@ -573,6 +623,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                     normalize_spaces=args.normalize_spaces,
                                     strip_leading_bom=args.strip_leading_bom,
                                     strip_bidi=args.strip_bidi, keep_rtl_bidi=args.keep_rtl_bidi,
+                                    allow_ivs=args.allow_ivs,
                                     strip_controls=args.strip_controls))
             if out == text:
                 continue

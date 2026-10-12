@@ -55,6 +55,7 @@ Useful flags:
 | Flag | Effect |
 | --- | --- |
 | `--normalize-spaces` | NBSP and exotic spaces → `U+0020` (off by default: NBSP is often deliberate) |
+| `--allow-ivs` | keep any number of ideographic variation sequences (name or registry data); by default more than 3 in a file are flagged |
 | `--keep-rtl-bidi` | keep bidi embeddings/isolates that close on a line containing RTL text; overrides are never kept |
 | `--strip-bidi` | strip bidi marks (LRM/RLM) even in documents that contain RTL script |
 | `--strip-controls` | remove C0/C1 controls (report-only by default: ANSI codes and ASCII separators are usually deliberate) |
@@ -75,14 +76,18 @@ latter by default, reporting each one with a reason:
 
 - `U+200D` inside an emoji ZWJ sequence (family: `U+1F468 U+200D U+1F469 U+200D U+1F467`)
 - `U+200C`/`U+200D` joining letters in Arabic, Persian, Devanagari, Hangul, and other
-  complex scripts
+  complex scripts, unless they are denser than prose: over 15% of the letters in any
+  200-letter window is the shape of a hidden bit stream, and all of them are flagged
 - tag characters inside the three recommended subdivision flags, England, Scotland and
   Wales (`U+1F3F4`, then tags spelling `gbsct`, then `U+E007F`). Any other flag-shaped
   tag run is treated as a payload: it is the cheapest wrapper for hidden text.
 - `U+FE0E`/`U+FE0F` choosing text or emoji style after an emoji or a keycap digit (red
   heart: `U+2764 U+FE0F`). Any other selector after an emoji is removed, because that is
   how bytes are smuggled through an emoji.
-- variation selectors after CJK ideographs (standardized and ideographic variants)
+- one ideographic variation selector (`U+E0100`–`U+E01EF`, or `U+FE00`–`U+FE02`) after an
+  ideograph. More than 3 in one file are flagged, because a payload can hide one byte per
+  ideograph; pass `--allow-ivs` for name or registry data. A selector after kana, CJK
+  punctuation or a space is never kept.
 - `U+2800` blank cells next to visible Braille dots, and Hangul jamo fillers next to a real
   jamo. A run of blanks cannot vouch for itself.
 - bidi marks (LRM/RLM) in documents that actually contain right-to-left script. Bidi
