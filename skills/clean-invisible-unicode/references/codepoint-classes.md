@@ -111,6 +111,9 @@ narrow channel. Name it rather than claim otherwise:
 - **About 1 bit per 7 letters** of Arabic-script or Indic text as joiners kept under the
   15% density limit: at most about 30 bits per 200 letters. Real Persian prose measured
   2% overall and 8.1% in its densest 200-letter window, so the limit sits at about twice that.
+- **Fewer than 6 joiners in a file**, below the density check's minimum.
+- **About 1 bit per visible emoji** as a ZWJ between two emoji that do not form a
+  recognised sequence. Emoji ZWJ is kept so real sequences such as families keep working.
 - **Look-alike words written wholly in another script.** Mixed-script detection needs Latin
   plus another script in one word; an all-Cyrillic word that reads as `admin` is not mixed.
 - **Meaning-level steganography**: word choice, spacing patterns, whitespace at line ends.

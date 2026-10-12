@@ -213,6 +213,11 @@ class IdeographAndJoinerChannels(unittest.TestCase):
         text = persian_paragraph() + bits + chr(0x0628) + " " + persian_paragraph()
         self.assertEqual(us.analyse(text).max_severity(), "high")
 
+    def test_diacritics_do_not_dilute_joiner_density(self):
+        # Six stacked harakat on one letter are still one letter.
+        unit = chr(0x0628) + cps(0x064E, 0x0650, 0x064F, 0x0651, 0x0652, 0x064B) + ZWNJ
+        self.assertEqual(us.analyse(unit * 40 + chr(0x0628)).max_severity(), "high")
+
     def test_persian_prose_kept(self):
         rep = us.analyse(persian_paragraph())
         self.assertTrue(rep.findings)

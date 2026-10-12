@@ -418,7 +418,10 @@ def _flag_payload_patterns(rep: Report, text: str, *, allow_ivs: bool) -> None:
     if len(joiners) < JOINER_MIN:
         return
     at = {f.index for f in joiners}
-    seq = [1 if i in at else 0 for i, c in enumerate(text) if i in at or _joins_script(c)]
+    # Letters only: stacked diacritics, digits and punctuation in these blocks would
+    # otherwise inflate the count while adding no visible glyph.
+    seq = [1 if i in at else 0 for i, c in enumerate(text)
+           if i in at or (_joins_script(c) and c.isalpha())]
     width = min(JOINER_WINDOW, len(seq))
     count = densest = sum(seq[:width])
     for k in range(width, len(seq)):
@@ -620,7 +623,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                     normalize_spaces=args.normalize_spaces,
                                     strip_leading_bom=args.strip_leading_bom,
                                     strip_bidi=args.strip_bidi, keep_rtl_bidi=args.keep_rtl_bidi,
-                      allow_ivs=args.allow_ivs,
+                                    allow_ivs=args.allow_ivs,
                                     strip_controls=args.strip_controls))
             if out == text:
                 continue
