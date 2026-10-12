@@ -4,11 +4,11 @@ What the scanner detects, why it matters, and what it does by default.
 
 | Class | Codepoints | Severity | Default |
 | --- | --- | --- | --- |
-| `zero-width` | `U+200B` ZWSP, `U+200C` ZWNJ, `U+200D` ZWJ, `U+2060` WJ, `U+FEFF` BOM, `U+00AD` SHY, `U+180E`, `U+2061`–`U+2064` | medium | remove unless load-bearing |
+| `zero-width` | `U+200B` ZWSP, `U+200C` ZWNJ, `U+200D` ZWJ, `U+2060` WJ, `U+FEFF` BOM, `U+00AD` SHY, `U+180E`, `U+2061`–`U+2064` | medium | remove unless load-bearing; joiners denser than prose are flagged **high** |
 | `bidi-control` | `U+202A`–`U+202E`, `U+2066`–`U+2069` | **high** | remove (`--keep-rtl-bidi` keeps balanced embeddings/isolates on RTL lines; overrides never) |
 | `bidi-mark` | `U+200E` LRM, `U+200F` RLM | medium | remove unless the document contains RTL script |
 | `tag-char` | `U+E0000`–`U+E007F` | **high** | remove unless inside one of the three RGI subdivision flags |
-| `variation-selector` | `U+FE00`–`U+FE0F`, `U+E0100`–`U+E01EF` | medium | remove unless `U+FE0E`/`U+FE0F` after an emoji or keycap digit, or any selector after a CJK ideograph or complex-script letter |
+| `variation-selector` | `U+FE00`–`U+FE0F`, `U+E0100`–`U+E01EF` | **high** | remove unless `U+FE0E`/`U+FE0F` after an emoji or keycap digit, or one ideographic selector after an ideograph (more than 3 per file flagged unless `--allow-ivs`) |
 | `private-use` | `U+E000`–`U+F8FF`, `U+F0000`–`U+FFFFD`, `U+100000`–`U+10FFFD` | **high** | remove |
 | `deprecated-format` | `U+206A`–`U+206F` | **high** | remove |
 | `line-separator` | `U+2028`, `U+2029` | medium | replace with a newline |
@@ -43,7 +43,11 @@ favourite for hiding instructions inside text that a human reviewer cannot see.
 **Variation selectors.** `U+FE00`–`U+FE0F` and `U+E0100`–`U+E01EF` legitimately pick a
 glyph variant, but there are 256 of them, so a run after any base character carries one
 byte per selector and is invisible everywhere. After an emoji only `U+FE0E` (text style)
-and `U+FE0F` (emoji style) mean anything; every other selector there is payload.
+and `U+FE0F` (emoji style) mean anything; every other selector there is payload. After an
+ideograph, a registered variation sequence uses exactly one selector from `U+E0100`–`U+E01EF`
+(or `U+FE00`–`U+FE02`), and ordinary text almost never contains one. So the scanner keeps
+up to 3 per file and flags them all beyond that: otherwise a payload hides one byte behind
+each ideograph of a Chinese or Japanese sentence.
 
 **Private use.** No assigned meaning. Renders as whatever the origin font decides and as
 tofu everywhere else, so it survives review while carrying out-of-band data.
@@ -83,10 +87,10 @@ A carrier and a functional character can be the same codepoint. The rule is cont
 
 | Character | Load-bearing when | Carrier when |
 | --- | --- | --- |
-| `U+200D` ZWJ | between emoji, or joining complex-script letters | between ASCII |
-| `U+200C` ZWNJ | inside Arabic/Persian/Indic/Hangul text | between ASCII |
-| `U+FE0E`/`U+FE0F` | follows an emoji, a keycap digit, or a CJK ideograph | follows ASCII |
-| other variation selectors | follow a CJK ideograph or complex-script letter | follow an emoji or ASCII |
+| `U+200D` ZWJ | between emoji, or joining complex-script letters at prose density | between ASCII, or over 15% of letters in a 200-letter window |
+| `U+200C` ZWNJ | inside Arabic/Persian/Indic/Hangul text at prose density | between ASCII, or over 15% of letters in a 200-letter window |
+| `U+FE0E`/`U+FE0F` | follows an emoji or a keycap digit | follows anything else |
+| `U+FE00`–`U+FE02`, `U+E0100`–`U+E01EF` | one after an ideograph, at most 3 per file (or `--allow-ivs`) | after kana, punctuation, a letter or a space; or the 4th in a file |
 | `U+E00xx` tag | inside the England, Scotland or Wales flag | anywhere else, including other flag-shaped runs |
 | `U+115F`/`U+1160` | the filler run borders a real jamo | anywhere else, including a run of fillers |
 | `U+2800` | the blank run borders a visible Braille dot | anywhere else, including a run of blanks |
@@ -97,6 +101,23 @@ A carrier and a functional character can be the same codepoint. The rule is cont
 `--aggressive` overrides all of these. It will visibly corrupt emoji sequences and Persian
 or Devanagari text, so only reach for it when the user explicitly wants a paranoid pass and
 accepts that cost.
+
+## What it cannot catch
+
+The keep rules and the two density limits are heuristics, so a patient attacker still has a
+narrow channel. Name it rather than claim otherwise:
+
+- **Up to 3 bytes per file** as ideographic variation selectors, under `IVS_LIMIT`.
+- **About 1 bit per 7 letters** of Arabic-script or Indic text as joiners kept under the
+  15% density limit: at most about 30 bits per 200 letters. Real Persian prose measured
+  2% overall and 8.1% in its densest 200-letter window, so the limit sits at about twice that.
+- **Look-alike words written wholly in another script.** Mixed-script detection needs Latin
+  plus another script in one word; an all-Cyrillic word that reads as `admin` is not mixed.
+- **Meaning-level steganography**: word choice, spacing patterns, whitespace at line ends.
+  The scanner checks characters, not content.
+
+The limits were calibrated on Wikipedia text on 2026-10-12. Tighten `IVS_LIMIT`,
+`JOINER_RATIO` and `JOINER_WINDOW` in `scripts/unicode_scan.py` if your corpus allows it.
 
 ## Prior art
 
