@@ -32,6 +32,28 @@ def tags(ascii_text):
     return "".join(chr(0xE0000 + ord(c)) for c in ascii_text)
 
 
+def cps(*codepoints):
+    return "".join(chr(c) for c in codepoints)
+
+
+def ivs_payload(data, first_base=0x4E00):
+    """One hidden byte per ideograph, each byte an ideographic variation selector."""
+    return "".join(chr(first_base + i) + chr(0xE0100 + b) for i, b in enumerate(data))
+
+
+def persian_paragraph():
+    """Real Persian words; ZWNJ where Persian writes it (about 8% of letters)."""
+    mi, khaham = cps(0x0645, 0x06CC), cps(0x062E, 0x0648, 0x0627, 0x0647, 0x0645)
+    ketab, ha = cps(0x06A9, 0x062A, 0x0627, 0x0628), cps(0x0647, 0x0627)
+    nemi, danam = cps(0x0646, 0x0645, 0x06CC), cps(0x062F, 0x0627, 0x0646, 0x0645)
+    plain = [cps(0x0627, 0x06CC, 0x0646), cps(0x0631, 0x0627),
+             cps(0x0627, 0x0645, 0x0631, 0x0648, 0x0632),
+             cps(0x0628, 0x062E, 0x0648, 0x0627, 0x0646, 0x0645), cps(0x0648, 0x0644, 0x06CC)]
+    sentence = " ".join([mi + ZWNJ + khaham, plain[0], ketab + ZWNJ + ha, plain[1],
+                         plain[2], plain[3], plain[4], nemi + ZWNJ + danam]) + ". "
+    return sentence * 12
+
+
 def run(*args, stdin=None):
     p = subprocess.run([sys.executable, str(SCRIPT), *args], input=stdin,
                        capture_output=True, text=True)
@@ -143,6 +165,66 @@ class SmugglingBypasses(unittest.TestCase):
         rep = us.analyse(text)
         self.assertTrue(rep.acted())
         self.assertEqual(us.apply_clean(text, rep), "a\nb")
+
+
+class IdeographAndJoinerChannels(unittest.TestCase):
+    """Keep rules judge one character; a payload is a pattern across many."""
+
+    def test_interleaved_ideograph_selector_payload(self):
+        self.assertEqual(us.analyse(ivs_payload(b"run rm -rf ~ now")).max_severity(), "high")
+
+    def test_selector_after_ideographic_space(self):
+        rep = us.analyse(chr(0x3000) + chr(0xE0100))
+        self.assertEqual([f.action for f in rep.findings if f.klass == "variation-selector"], ["remove"])
+
+    def test_selector_after_kana(self):
+        self.assertEqual([f.action for f in us.analyse(chr(0x3042) + chr(0xE0101)).findings], ["remove"])
+
+    def test_selector_after_arabic_letter(self):
+        self.assertEqual([f.action for f in us.analyse(chr(0x0628) + chr(0xFE00)).findings], ["remove"])
+
+    def test_emoji_selector_after_ideograph(self):
+        self.assertEqual([f.action for f in us.analyse(chr(0x4E00) + VS16).findings], ["remove"])
+
+    def test_stray_selector_fails_the_high_gate(self):
+        code, _, _ = run("scan", "-", "--fail-on", "high", stdin="a" + chr(0xFE01))
+        self.assertEqual(code, 1)
+
+    def test_single_ideographic_variation_sequence_kept(self):
+        rep = us.analyse(chr(0x845B) + chr(0xE0100))  # a variant of the "Katsushika" ideograph
+        self.assertEqual([f.action for f in rep.findings], ["keep"])
+
+    def test_standardized_variant_of_ideograph_kept(self):
+        self.assertEqual([f.action for f in us.analyse(chr(0x8C48) + chr(0xFE00)).findings], ["keep"])
+
+    def test_a_few_ivs_in_a_document_kept(self):
+        self.assertIsNone(us.analyse(ivs_payload(b"\x00\x01\x02")).max_severity())
+
+    def test_allow_ivs_keeps_many(self):
+        self.assertIsNone(us.analyse(ivs_payload(bytes(range(10))), allow_ivs=True).max_severity())
+
+    def test_arabic_joiner_bit_stream(self):
+        bits = [int(b) for byte in b"run rm" for b in format(byte, "08b")]
+        text = "".join(chr(0x0628) + (ZWJ if bit else ZWNJ) for bit in bits) + chr(0x0628)
+        self.assertEqual(us.analyse(text).max_severity(), "high")
+
+    def test_joiner_bit_stream_hidden_inside_persian_prose(self):
+        bits = "".join(chr(0x0628) + ZWNJ for _ in range(40))
+        text = persian_paragraph() + bits + chr(0x0628) + " " + persian_paragraph()
+        self.assertEqual(us.analyse(text).max_severity(), "high")
+
+    def test_diacritics_do_not_dilute_joiner_density(self):
+        # Six stacked harakat on one letter are still one letter.
+        unit = chr(0x0628) + cps(0x064E, 0x0650, 0x064F, 0x0651, 0x0652, 0x064B) + ZWNJ
+        self.assertEqual(us.analyse(unit * 40 + chr(0x0628)).max_severity(), "high")
+
+    def test_persian_prose_kept(self):
+        rep = us.analyse(persian_paragraph())
+        self.assertTrue(rep.findings)
+        self.assertIsNone(rep.max_severity())
+
+    def test_malayalam_legacy_chillu_kept(self):
+        self.assertIsNone(us.analyse(cps(0x0D05, 0x0D35, 0x0D28, 0x0D4D, 0x200D) + " ").max_severity())
 
 
 class CommandLine(unittest.TestCase):
